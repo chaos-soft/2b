@@ -17,6 +17,10 @@ class BuildStripsOperator(bpy.types.Operator):
         for idx, strip in enumerate(strips):
             if 'filepath' not in strip and 'filepath_sound' not in strip:
                 continue
+            if f'm{i}' in context.scene.sequence_editor.sequences_all or \
+               f's{i}' in context.scene.sequence_editor.sequences_all:
+                i += 1
+                continue
 
             flags = strip.get('flags', [])
 
@@ -61,8 +65,9 @@ class BuildStripsOperator(bpy.types.Operator):
                     frame_start=0,
                     relative_path=False,
                 )
-                bpy.ops.sequencer.split(frame=offset, side='LEFT')
-                bpy.ops.sequencer.delete()
+                if offset:
+                    bpy.ops.sequencer.split(frame=offset, side='LEFT')
+                    bpy.ops.sequencer.delete()
 
                 m = context.sequences[-1]
                 if m.type == 'SOUND':
@@ -74,16 +79,18 @@ class BuildStripsOperator(bpy.types.Operator):
                 s.name = f's{i}'
 
                 m.frame_start = position - m.frame_offset_start
-                if channel == 6:
-                    m.frame_final_duration = duration - fades[1]
-                else:
-                    m.frame_final_duration = duration
+                if duration:
+                    if channel == 6:
+                        m.frame_final_duration = duration - fades[1]
+                    else:
+                        m.frame_final_duration = duration
                 m.channel = channel
                 if 'mute_movie' in flags:
                     m.mute = True
 
                 s.frame_start = position - s.frame_offset_start
-                s.frame_final_duration = duration
+                if duration:
+                    s.frame_final_duration = duration
                 s.channel = channel - 1
             elif 'filepath_sound' in strip:
                 s = sound_strip_add(
@@ -162,8 +169,8 @@ def set_mutes(strip, mutes, volume):
             continue
         position2 = v
         set_volume_level(strip, strip.frame_final_start + position1, volume)
-        set_volume_level(strip, strip.frame_final_start + position1 + 1, 0)
-        set_volume_level(strip, strip.frame_final_start + position2 - 1, 0)
+        set_volume_level(strip, strip.frame_final_start + position1 + 2, 0)
+        set_volume_level(strip, strip.frame_final_start + position2 - 2, 0)
         set_volume_level(strip, strip.frame_final_start + position2, volume)
         if filepath_mute:
             s = sound_strip_add(
@@ -174,7 +181,7 @@ def set_mutes(strip, mutes, volume):
                 duration=position2 - position1,
                 position=strip.frame_final_start + position1,
             )
-            set_fades(s, fades=[1, 1], volume=volume_levels.get(filepath_mute, 1))
+            set_fades(s, fades=[2, 2], volume=volume_levels.get(filepath_mute, 1))
         position1 = None
         position2 = None
 
@@ -209,7 +216,8 @@ def sound_strip_add(filepath, channel, name, offset, duration, position):
     s = bpy.context.sequences[-1]
     s.name = name
     s.frame_start = position - s.frame_offset_start
-    s.frame_final_duration = duration
+    if duration:
+        s.frame_final_duration = duration
     s.channel = channel - 1
     return s
 
