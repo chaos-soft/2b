@@ -167,22 +167,23 @@ class Strip():
             volume = None
         return keyframes
 
-    def get_xml(self):
+    def get_xml(self) -> str:
         delta = self.get_delta()
         left = channels[self.channel].get_left_sequence(self)
         left_fade_out = left.fade_out if left else 0
         left_frame_final_end = left.frame_final_end if left else 1
         xml = []
-        if left_frame_final_end != self.frame_final_start:
-            if (self.is_audio() and 'mute_sound' in self.flags) or (self.is_video() and 'mute_movie' in self.flags):
+        if (self.is_audio() and 'mute_sound' in self.flags) or (self.is_video() and 'mute_movie' in self.flags):
+            if left_frame_final_end != self.frame_final_start:
                 duration = self.frame_final_end - left_frame_final_end
                 duration = self.extend_empty(left_fade_out, duration)
-                xml.append(self.xml_empty.format(duration * delta))
-                return '\n'.join(xml)
+                return self.xml_empty.format(duration * delta)
             else:
-                duration = self.frame_final_start - left_frame_final_end
-                duration = self.extend_empty(left_fade_out, duration)
-                xml.append(self.xml_empty.format(duration * delta))
+                return ''
+        if left_frame_final_end != self.frame_final_start:
+            duration = self.frame_final_start - left_frame_final_end
+            duration = self.extend_empty(left_fade_out, duration)
+            xml.append(self.xml_empty.format(duration * delta))
         channel = self.get_audio_channel()
         xml.append(self.xml.format(self.offset * delta, channel, self.duration * delta, self, self.filepath))
         return '\n'.join(xml)
