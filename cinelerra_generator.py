@@ -147,7 +147,6 @@ class Strip():
 
     def get_volume_level(self, position, volume):
         delta = self.get_delta()
-        position -= 1
         r = {}
         r[position] = self.xml_fade.format(position * delta, volume)
         return r
@@ -171,7 +170,7 @@ class Strip():
         delta = self.get_delta()
         left = channels[self.channel].get_left_sequence(self)
         left_fade_out = left.fade_out if left else 0
-        left_frame_final_end = left.frame_final_end if left else 1
+        left_frame_final_end = left.frame_final_end if left else 0
         xml = []
         if (self.is_audio() and 'mute_sound' in self.flags) or (self.is_video() and 'mute_movie' in self.flags):
             if left_frame_final_end != self.frame_final_start:

@@ -1,10 +1,14 @@
+from typing import Any, Self
+
 import bpy
 import yaml
 
-filepath_mute = ''
-filepath_offset = 0
-strips = []
-volume_levels = {}
+FADE_MIN: int = 0
+
+type_strip = dict[str, Any]
+
+strips: list[type_strip] = []
+volume_levels: dict[str, float] = {}
 
 
 class BuildStripsOperator(bpy.types.Operator):
@@ -13,106 +17,9 @@ class BuildStripsOperator(bpy.types.Operator):
 
     def execute(self, context):
         load_yaml_config()
-        i = 1
-        for idx, strip in enumerate(strips):
-            if 'filepath' not in strip and 'filepath_sound' not in strip:
-                continue
-            if f'm{i}' in context.scene.sequence_editor.sequences_all or \
-               f's{i}' in context.scene.sequence_editor.sequences_all:
-                i += 1
-                continue
-
-            flags = strip.get('flags', [])
-
-            fades = strip.get('fades', [0, 0])
-            try:
-                fades[0] = strips[idx - 1]['crossfade']
-            except (IndexError, KeyError):
-                pass
-            try:
-                fades[1] = strips[idx + 1]['crossfade']
-            except (IndexError, KeyError):
-                pass
-
-            try:
-                offset, duration, position = strip['offset_duration_position']
-            except ValueError:
-                offset, duration = strip['offset_duration_position']
-                position = strip.get('position', -fades[0])
-            name = strip.get('position_by', f's{i - 1}')
-            if name in context.scene.sequence_editor.sequences_all:
-                s = context.scene.sequence_editor.sequences_all[name]
-                position += s.frame_final_end
-
-            channel = strip.get('channel')
-            if not channel:
-                name = f'm{i - 1}'
-                if name in context.scene.sequence_editor.sequences_all:
-                    m = context.scene.sequence_editor.sequences_all[name]
-                    channels = [4, 6]
-                    if m.channel in channels:
-                        channels.remove(m.channel)
-                        channel = channels[0]
-                    else:
-                        channel = 4
-                else:
-                    channel = 4
-
-            if 'filepath' in strip:
-                bpy.ops.sequencer.movie_strip_add(
-                    channel=100,
-                    filepath=strip['filepath'],
-                    frame_start=0,
-                    relative_path=False,
-                )
-                if offset:
-                    bpy.ops.sequencer.split(frame=offset, side='LEFT')
-                    bpy.ops.sequencer.delete()
-
-                m = context.sequences[-1]
-                if m.type == 'SOUND':
-                    m = context.sequences[-2]
-                    s = context.sequences[-1]
-                else:
-                    s = context.sequences[-2]
-                m.name = f'm{i}'
-                s.name = f's{i}'
-
-                m.frame_start = position - m.frame_offset_start
-                if duration:
-                    if channel == 6:
-                        m.frame_final_duration = duration - fades[1]
-                    else:
-                        m.frame_final_duration = duration
-                m.channel = channel
-                if 'mute_movie' in flags:
-                    m.mute = True
-
-                s.frame_start = position - s.frame_offset_start
-                if duration:
-                    s.frame_final_duration = duration
-                s.channel = channel - 1
-            elif 'filepath_sound' in strip:
-                s = sound_strip_add(
-                    strip['filepath_sound'],
-                    channel=channel,
-                    name=f's{i}',
-                    offset=offset,
-                    duration=duration,
-                    position=position,
-                )
-                strip['filepath'] = strip['filepath_sound']
-
-            if 'mute_sound' in flags:
-                s.mute = True
-            else:
-                set_fades(s, fades=fades, volume=volume_levels.get(strip['filepath'], 1))
-                set_mutes(s, mutes=strip.get('mutes', []), volume=volume_levels.get(strip['filepath'], 1))
-                set_volume_levels_by_keyframes(s, volume_levels=strip.get('volume_levels', []))
-
-            print(i, strip.get('filepath', '') or strip.get('filepath_sound', ''))
-            i += 1
+        get_strips(strips, parent=Strip)
         bpy.ops.sequencer.select_all(action='SELECT')
+        print('FINISHED')
         return {'FINISHED'}
 
 
@@ -127,104 +34,189 @@ class BuildStripsPanel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row()
+        row.prop(context.scene, 'create_fades')
+        row = layout.row()
         row.operator('wm.build_strips')
 
 
+class Strip():
+    channel: int = 6
+    frame_final_end: int = 0
+    name: int = 0
+
+    def __init__(self, strip, parent):
+        self.flags = strip.get('flags', [])
+        self.name = parent.name + 1
+        if 'mute_blender' in self.flags:
+            return None
+        self.fade_in, self.fade_out, self.fade_in_position, self.fade_out_position = tuple(strip['fades'])
+        self.filepath = strip['filepath']
+        self.get_channel(strip, parent)
+        self.get_offset_duration_position(strip, parent)
+        self.volume = volume_levels.get(strip['filepath'], 1)
+        self.volume_levels = strip.get('volume_levels', [])
+        self.movie_strip_add()
+        self.find_strips()
+        self.set_start_duration()
+        self.set_channel_flags()
+        if 'mute_sound' not in self.flags and bpy.context.scene.create_fades:
+            self.set_fades()
+            self.set_volume_levels_by_keyframes()
+        self.frame_final_end = self.s.frame_final_end
+
+    def find_strips(self):
+        self.m = bpy.context.sequences[-1]
+        if self.m.type == 'SOUND':
+            self.m = bpy.context.sequences[-2]
+            self.s = bpy.context.sequences[-1]
+        else:
+            self.s = bpy.context.sequences[-2]
+        self.m.name = f'm{self.name}'
+        self.s.name = f's{self.name}'
+
+    def get_channel(self, strip: type_strip, parent: Self) -> None:
+        self.channel = strip.get('channel', 0)
+        if not self.channel:
+            channels = [4, 6]
+            if parent.channel in channels:
+                channels.remove(parent.channel)
+                self.channel = channels[0]
+            else:
+                self.channel = 4
+
+    def get_offset_duration_position(self, strip, parent):
+        try:
+            self.offset, self.duration, self.position = strip['offset_duration_position']
+        except ValueError:
+            self.offset, self.duration = strip['offset_duration_position']
+            self.position = strip.get('position', -self.fade_in)
+        self.position += parent.frame_final_end
+
+    def movie_strip_add(self):
+        bpy.ops.sequencer.movie_strip_add(
+            channel=100,
+            filepath=self.filepath,
+            frame_start=0,
+            relative_path=False,
+            use_framerate=False,
+        )
+        if self.offset:
+            bpy.ops.sequencer.split(frame=self.offset, side='LEFT')
+            bpy.ops.sequencer.delete()
+
+    def set_channel_flags(self):
+        self.m.channel = self.channel
+        if 'mute_movie' in self.flags:
+            self.m.mute = True
+
+        self.s.channel = self.channel - 1
+        if 'mute_sound' in self.flags:
+            self.s.mute = True
+
+    def set_fades(self):
+        if self.fade_in != 0 or self.volume != 1:
+            if self.fade_in_position:
+                position = self.s.frame_final_start + self.fade_in_position
+            else:
+                position = self.s.frame_final_start
+            self.set_volume_level(position, 0)
+            self.set_volume_level(position + self.fade_in, self.volume)
+
+        if self.fade_out != 0 or self.volume != 1:
+            if self.fade_out_position:
+                position = self.s.frame_final_start + self.fade_out_position + self.fade_out
+            else:
+                position = self.s.frame_final_end
+            self.set_volume_level(position, 0)
+            self.set_volume_level(position - self.fade_out, self.volume)
+
+    def set_start_duration(self):
+        self.m.frame_start = self.position - self.m.frame_offset_start
+        if self.duration:
+            if self.channel == 6:
+                self.m.frame_final_duration = self.duration - self.fade_out
+            else:
+                self.m.frame_final_duration = self.duration
+
+        self.s.frame_start = self.position - self.s.frame_offset_start
+        if self.duration:
+            self.s.frame_final_duration = self.duration
+
+    def set_volume_level(self, position, volume):
+        self.s.volume = volume
+        self.s.keyframe_insert('volume', frame=position)
+
+    def set_volume_levels_by_keyframes(self):
+        constants = dict(D=self.volume, FM=FADE_MIN)
+        position = None
+        volume = None
+        for v in self.volume_levels:
+            if position is None:
+                position = v
+                continue
+            volume = constants.get(v, v)
+            self.set_volume_level(self.s.frame_final_start + position, volume)
+            position = None
+            volume = None
+
+
+def get_strips(strips: list[type_strip], parent: Strip) -> None:
+    for i, strip in enumerate(strips):
+        if 'filepath' not in strip:
+            continue
+        name = f's{parent.name + 1}'
+        if name in bpy.context.scene.sequence_editor.sequences_all:
+            sequence = bpy.context.scene.sequence_editor.sequences_all[name]
+            strip['flags'] = ['mute_blender']
+            s = Strip(strip, parent=parent)
+            s.channel = sequence.channel
+            s.frame_final_end = sequence.frame_final_end
+            parent = s
+            continue
+
+        strip['fades'] = strip.get('fades', [0, 0])
+        if len(strip['fades']) == 2:
+            strip['fades'] += [0, 0]
+        try:
+            strip['fades'][0] = strips[i - 1]['crossfade']
+        except (IndexError, KeyError):
+            pass
+        try:
+            strip['fades'][1] = strips[i + 1]['crossfade']
+        except (IndexError, KeyError):
+            pass
+        s = Strip(strip, parent=parent)
+
+        parent = s
+        print(s.name, s.filepath)
+
+        if 'strips' in strip:
+            get_strips(strip['strips'], parent=parent)
+
+
 def load_yaml_config():
-    global filepath_mute, filepath_offset, strips, volume_levels
+    global strips, volume_levels
     path = bpy.path.abspath('//strips.yml')
-    try:
-        with open(path) as f:
-            strips = yaml.safe_load(f)
-            config = strips[-1]
-            if 'filepath_mute' in config:
-                filepath_mute = config['filepath_mute']
-                filepath_offset = config['filepath_offset']
-            if 'volume_levels' in config:
-                volume_levels = config['volume_levels']
-    except OSError:
-        pass
+    with open(path) as f:
+        strips = yaml.safe_load(f)
+        config = strips[-1]
+        if 'volume_levels' in config:
+            volume_levels = config['volume_levels']
 
 
 def register():
     bpy.utils.register_class(BuildStripsOperator)
     bpy.utils.register_class(BuildStripsPanel)
-
-
-def set_fades(strip, fades, volume):
-    if fades[0] != 0 or volume != 1:
-        set_volume_level(strip, strip.frame_final_start, 0)
-        set_volume_level(strip, strip.frame_final_start + fades[0], volume)
-    if fades[1] != 0 or volume != 1:
-        set_volume_level(strip, strip.frame_final_end, 0)
-        set_volume_level(strip, strip.frame_final_end - fades[1], volume)
-
-
-def set_mutes(strip, mutes, volume):
-    position1 = None
-    position2 = None
-    for v in mutes:
-        if not position1:
-            position1 = v
-            continue
-        position2 = v
-        set_volume_level(strip, strip.frame_final_start + position1, volume)
-        set_volume_level(strip, strip.frame_final_start + position1 + 2, 0)
-        set_volume_level(strip, strip.frame_final_start + position2 - 2, 0)
-        set_volume_level(strip, strip.frame_final_start + position2, volume)
-        if filepath_mute:
-            s = sound_strip_add(
-                filepath_mute,
-                channel=14,
-                name='mute',
-                offset=filepath_offset,
-                duration=position2 - position1,
-                position=strip.frame_final_start + position1,
-            )
-            set_fades(s, fades=[2, 2], volume=volume_levels.get(filepath_mute, 1))
-        position1 = None
-        position2 = None
-
-
-def set_volume_level(strip, position, volume):
-    strip.volume = volume
-    strip.keyframe_insert('volume', frame=position)
-
-
-def set_volume_levels_by_keyframes(strip, volume_levels):
-    position = None
-    volume = None
-    for v in volume_levels:
-        if position is None:
-            position = v
-            continue
-        volume = v
-        set_volume_level(strip, strip.frame_final_start + position, volume)
-        position = None
-        volume = None
-
-
-def sound_strip_add(filepath, channel, name, offset, duration, position):
-    bpy.ops.sequencer.sound_strip_add(
-        channel=100,
-        filepath=filepath,
-        frame_start=0,
-        relative_path=False,
+    bpy.types.Scene.create_fades = bpy.props.BoolProperty(
+        default=True,
+        name='Create Fades',
     )
-    bpy.ops.sequencer.split(frame=offset, side='LEFT')
-    bpy.ops.sequencer.delete()
-    s = bpy.context.sequences[-1]
-    s.name = name
-    s.frame_start = position - s.frame_offset_start
-    if duration:
-        s.frame_final_duration = duration
-    s.channel = channel - 1
-    return s
 
 
 def unregister():
     bpy.utils.unregister_class(BuildStripsOperator)
     bpy.utils.unregister_class(BuildStripsPanel)
+    del bpy.types.Scene.create_fades
 
 
 if __name__ == '__main__':
