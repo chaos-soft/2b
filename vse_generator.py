@@ -45,12 +45,12 @@ class Strip():
     name: int = 0
 
     def __init__(self, strip, parent):
+        self.filepath = strip['filepath']
         self.flags = strip.get('flags', [])
         self.name = parent.name + 1
         if 'mute_blender' in self.flags:
             return None
         self.fade_in, self.fade_out, self.fade_in_position, self.fade_out_position = tuple(strip['fades'])
-        self.filepath = strip['filepath']
         self.get_channel(strip, parent)
         self.get_offset_duration_position(strip, parent)
         self.volume = volume_levels.get(strip['filepath'], 1)
