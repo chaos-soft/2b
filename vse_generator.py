@@ -160,7 +160,7 @@ class Strip():
             volume = None
 
 
-def get_strips(strips: list[type_strip], parent: Strip) -> None:
+def get_strips(strips: list[type_strip], parent: Strip) -> Strip:
     for i, strip in enumerate(strips):
         if 'filepath' not in strip:
             continue
@@ -191,7 +191,9 @@ def get_strips(strips: list[type_strip], parent: Strip) -> None:
         print(s.name, s.filepath)
 
         if 'strips' in strip:
-            get_strips(strip['strips'], parent=parent)
+            p = get_strips(strip['strips'], parent=parent)
+            parent.name = p.name
+    return parent
 
 
 def load_yaml_config():
