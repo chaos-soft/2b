@@ -110,8 +110,11 @@ class Strip():
             self.m.mute = True
 
         self.s.channel = self.channel - 1
+        self.s.show_waveform = False
         if 'mute_sound' in self.flags:
             self.s.mute = True
+        if 'show_waveform' in self.flags:
+            self.s.show_waveform = True
 
     def set_fades(self):
         if self.fade_in != 0 or self.volume != 1:
