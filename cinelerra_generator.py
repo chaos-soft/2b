@@ -240,34 +240,32 @@ def main() -> None:
     get_strips(strips, parent=Strip)
 
     id = None
-    is_fade = False
     type = None
     with open(xml_file) as f:
         for line in f.readlines():
             line = line.strip()
-            print(line)
 
             if line.startswith('<TRACK'):
                 type = line.rstrip('>').split('=')[-1]
 
-            if line.startswith('<TITLE'):
+            if line.startswith('<TITLE>'):
                 id = int(line.lstrip('<TITLE>').rstrip('</TITLE>'))
 
-            if line.startswith('<EDITS'):
+            if line.startswith('</EDITS>'):
                 if id in channels:
                     for sequence in channels[id].sequences:
                         sequence.type = type
-                        print(sequence.get_xml())
+                        xml = sequence.get_xml()
+                        if xml:
+                            print(xml)
 
-            if line.startswith('<FADEAUTOS') and not is_fade and type == 'AUDIO':
-                is_fade = True
-            elif is_fade:
-                is_fade = False
-                if id in channels:
-                    for sequence in channels[id].sequences:
-                        keyframes = sequence.get_volume_keyframes()
-                        if keyframes:
-                            print('\n'.join(keyframes.values()))
+            if line.startswith('</FADEAUTOS>') and type == 'AUDIO' and id in channels:
+                for sequence in channels[id].sequences:
+                    keyframes = sequence.get_volume_keyframes()
+                    if keyframes:
+                        print('\n'.join(keyframes.values()))
+
+            print(line)
 
 
 if __name__ == '__main__':
