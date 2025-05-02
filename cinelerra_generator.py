@@ -33,6 +33,8 @@ class Channel():
 
 class Strip():
     channel: int = 3
+    fade_out: int = 0
+    fade_out_position: int = 0
     frame_final_end: int = 0
     type: str = 'AUDIO'
     xml: str = '<EDIT STARTSOURCE={} CHANNEL={} LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0 USER_TITLE="{}"><FILE SRC="{}"></FILE></EDIT>'  # noqa: E501
@@ -60,13 +62,16 @@ class Strip():
 
     @property
     def duration(self):
-        if self.is_video() and self.channel == 3:
+        is_last = False
+        if sequences:
+            is_last = self is sequences[-1]
+        if self.is_video() and self.channel in [2, 3] and not self.fade_out_position and not is_last:
             return self.duration_ - self.fade_out
         else:
             return self.duration_
 
-    def extend_empty(self, left_fade_out, duration):
-        if self.is_video() and self.channel == 3:
+    def extend_empty(self, duration, left_fade_out, left_fade_out_position):
+        if self.is_video() and self.channel in [2, 3] and not left_fade_out_position:
             duration += left_fade_out
         return duration
 
@@ -167,25 +172,23 @@ class Strip():
         return keyframes
 
     def get_xml(self) -> str:
-        delta = self.get_delta()
-        left = channels[self.channel].get_left_sequence(self)
-        left_fade_out = left.fade_out if left else 0
-        left_frame_final_end = left.frame_final_end if left else 0
-        xml = []
         if (self.is_audio() and 'mute_sound' in self.flags) or (self.is_video() and 'mute_movie' in self.flags):
-            if left_frame_final_end != self.frame_final_start:
-                duration = self.frame_final_end - left_frame_final_end
-                duration = self.extend_empty(left_fade_out, duration)
-                return self.xml_empty.format(duration * delta)
-            else:
-                return ''
-        if left_frame_final_end != self.frame_final_start:
-            duration = self.frame_final_start - left_frame_final_end
-            duration = self.extend_empty(left_fade_out, duration)
-            xml.append(self.xml_empty.format(duration * delta))
+            return ''
         channel = self.get_audio_channel()
-        xml.append(self.xml.format(self.offset * delta, channel, self.duration * delta, self, self.filepath))
-        return '\n'.join(xml)
+        delta = self.get_delta()
+        return self.xml.format(self.offset * delta, channel, self.duration * delta, self, self.filepath)
+
+    def get_xml_empty(self) -> str:
+        delta = self.get_delta()
+        left = channels[self.channel].get_left_sequence(self) or Strip
+        if left.frame_final_end != self.frame_final_start:
+            if (self.is_audio() and 'mute_sound' in self.flags) or (self.is_video() and 'mute_movie' in self.flags):
+                duration = self.frame_final_end - left.frame_final_end
+            else:
+                duration = self.frame_final_start - left.frame_final_end
+            duration = self.extend_empty(duration, left.fade_out, left.fade_out_position)
+            return self.xml_empty.format(duration * delta)
+        return ''
 
     def is_audio(self):
         return True if self.type == 'AUDIO' else False
@@ -239,7 +242,7 @@ def load_yaml_config(file):
 def main() -> None:
     get_strips(strips, parent=Strip)
 
-    id = None
+    id_ = None
     type = None
     with open(xml_file) as f:
         for line in f.readlines():
@@ -249,18 +252,18 @@ def main() -> None:
                 type = line.rstrip('>').split('=')[-1]
 
             if line.startswith('<TITLE>'):
-                id = int(line.lstrip('<TITLE>').rstrip('</TITLE>'))
+                id_ = int(line.lstrip('<TITLE>').rstrip('</TITLE>'))
 
             if line.startswith('</EDITS>'):
-                if id in channels:
-                    for sequence in channels[id].sequences:
+                if id_ in channels:
+                    for sequence in channels[id_].sequences:
                         sequence.type = type
-                        xml = sequence.get_xml()
-                        if xml:
-                            print(xml)
+                        for xml in [sequence.get_xml_empty(), sequence.get_xml()]:
+                            if xml:
+                                print(xml)
 
-            if line.startswith('</FADEAUTOS>') and type == 'AUDIO' and id in channels:
-                for sequence in channels[id].sequences:
+            if line.startswith('</FADEAUTOS>') and type == 'AUDIO' and id_ in channels:
+                for sequence in channels[id_].sequences:
                     keyframes = sequence.get_volume_keyframes()
                     if keyframes:
                         print('\n'.join(keyframes.values()))
