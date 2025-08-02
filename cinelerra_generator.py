@@ -8,6 +8,8 @@ import yaml
 
 FADE_DELTA: int = 15
 FADE_MIN: int = -80
+FADE_MUTE_END: int = 3
+FADE_MUTE_START: int = 3
 
 type_keyframe = dict[int, str]
 type_strip = dict[str, Any]
@@ -33,24 +35,31 @@ class Channel():
 
 class Strip():
     channel: int = 3
+    cut: int = 0
     fade_out: int = 0
     fade_out_position: int = 0
     frame_final_end: int = 0
     type: str = 'AUDIO'
-    xml: str = '<EDIT STARTSOURCE={} CHANNEL={} LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0 USER_TITLE="{}"><FILE SRC="{}"></FILE></EDIT>'  # noqa: E501
+    xml: str = ('<EDIT STARTSOURCE={} CHANNEL={} LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0 '
+                'USER_TITLE="{}"><FILE SRC="{}"></FILE>{}</EDIT>')
     xml_empty: str = '<EDIT STARTSOURCE=0 CHANNEL=0 LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0></EDIT>'
     xml_fade: str = '<AUTO POSITION={} VALUE={} VALUE1=0 CONTROL_IN_VALUE=0 CONTROL_OUT_VALUE=0 TANGENT_MODE=0></AUTO>'
 
     def __init__(self, strip, parent):
+        self.append = strip.get('append', '')
         self.audio_channels = [1, 0]
+        self.cut = strip.get('cut', 0)
         self.fade_in, self.fade_out, self.fade_in_position, self.fade_out_position = tuple(strip['fades'])
         self.filepath = strip['filepath']
         self.flags = strip.get('flags', [])
         self.get_channel(strip, parent)
         self.get_offset_duration_position(strip)
         self.mutes = strip.get('mutes', [])
-        self.volume = volume_levels.get(strip['filepath'], 0)
+        self.mutes_config = strip.get('mutes_config', [])
         self.volume_levels = strip.get('volume_levels', [])
+        self.volume = strip.get('volume', 0)
+        if not self.volume:
+            self.volume = volume_levels.get(strip['filepath'], 0)
         self.add_start_end(parent)
 
     def __str__(self):
@@ -65,12 +74,17 @@ class Strip():
         is_last = False
         if sequences:
             is_last = self is sequences[-1]
-        if self.is_video() and self.channel in [2, 3] and not self.fade_out_position and not is_last:
+
+        if self.is_video() and self.cut:
+            return self.duration_ - self.cut
+        elif self.is_video() and self.channel in [2, 3] and not self.fade_out_position and not is_last:
             return self.duration_ - self.fade_out
         else:
             return self.duration_
 
-    def extend_empty(self, duration, left_fade_out, left_fade_out_position):
+    def extend_empty(self, duration, left_fade_out, left_fade_out_position, left_cut):
+        if self.is_video() and left_cut:
+            duration += left_cut
         if self.is_video() and self.channel in [2, 3] and not left_fade_out_position:
             duration += left_fade_out
         return duration
@@ -94,6 +108,20 @@ class Strip():
     def get_delta(self):
         return 800 if self.is_audio() else 1
 
+    def get_fade_in(self, position: int, offset: int) -> type_keyframe:
+        keyframes: type_keyframe = {}
+        keyframes |= self.get_volume_level(position + offset // 4, self.volume - FADE_DELTA)
+        keyframes |= self.get_volume_level(position, FADE_MIN)
+        keyframes |= self.get_volume_level(position + offset, self.volume)
+        return keyframes
+
+    def get_fade_out(self, position: int, offset: int) -> type_keyframe:
+        keyframes: type_keyframe = {}
+        keyframes |= self.get_volume_level(position - offset // 4, self.volume - FADE_DELTA)
+        keyframes |= self.get_volume_level(position, FADE_MIN)
+        keyframes |= self.get_volume_level(position - offset, self.volume)
+        return keyframes
+
     def get_fades(self) -> type_keyframe:
         keyframes: type_keyframe = {}
 
@@ -102,18 +130,14 @@ class Strip():
             position = self.frame_final_start + self.fade_in_position
         else:
             position = self.frame_final_start
-        keyframes |= self.get_volume_level(position + self.fade_in // 4, self.volume - FADE_DELTA)
-        keyframes |= self.get_volume_level(position, FADE_MIN)
-        keyframes |= self.get_volume_level(position + self.fade_in, self.volume)
+        keyframes |= self.get_fade_in(position, self.fade_in)
 
         if self.fade_out_position:
             keyframes |= self.get_volume_level(self.frame_final_end, FADE_MIN)
             position = self.frame_final_start + self.fade_out_position + self.fade_out
         else:
             position = self.frame_final_end
-        keyframes |= self.get_volume_level(position - self.fade_out // 4, self.volume - FADE_DELTA)
-        keyframes |= self.get_volume_level(position, FADE_MIN)
-        keyframes |= self.get_volume_level(position - self.fade_out, self.volume)
+        keyframes |= self.get_fade_out(position, self.fade_out)
 
         return keyframes
 
@@ -121,15 +145,21 @@ class Strip():
         keyframes: type_keyframe = {}
         position1 = None
         position2 = None
-        for v in self.mutes:
+        for i, v in enumerate(self.mutes):
             if not position1:
+                try:
+                    offset1 = self.mutes_config[i] or FADE_MUTE_START
+                except IndexError:
+                    offset1 = FADE_MUTE_START
                 position1 = v
                 continue
+            try:
+                offset2 = self.mutes_config[i] or FADE_MUTE_END
+            except IndexError:
+                offset2 = FADE_MUTE_END
             position2 = v
-            keyframes |= self.get_volume_level(self.frame_final_start + position1, self.volume)
-            keyframes |= self.get_volume_level(self.frame_final_start + position1 + 2, FADE_MIN)
-            keyframes |= self.get_volume_level(self.frame_final_start + position2 - 2, FADE_MIN)
-            keyframes |= self.get_volume_level(self.frame_final_start + position2, self.volume)
+            keyframes |= self.get_fade_out(self.frame_final_start + position1 + offset1, offset1)
+            keyframes |= self.get_fade_in(self.frame_final_start + position2 - offset2, offset2)
             position1 = None
             position2 = None
         return keyframes
@@ -176,7 +206,11 @@ class Strip():
             return ''
         channel = self.get_audio_channel()
         delta = self.get_delta()
-        return self.xml.format(self.offset * delta, channel, self.duration * delta, self, self.filepath)
+        if self.append and self.is_video():
+            append = f'\n{self.append}'
+        else:
+            append = ''
+        return self.xml.format(self.offset * delta, channel, self.duration * delta, self, self.filepath, append)
 
     def get_xml_empty(self) -> str:
         delta = self.get_delta()
@@ -186,7 +220,7 @@ class Strip():
                 duration = self.frame_final_end - left.frame_final_end
             else:
                 duration = self.frame_final_start - left.frame_final_end
-            duration = self.extend_empty(duration, left.fade_out, left.fade_out_position)
+            duration = self.extend_empty(duration, left.fade_out, left.fade_out_position, left.cut)
             return self.xml_empty.format(duration * delta)
         return ''
 
@@ -206,9 +240,10 @@ def get_strips(strips: list[type_strip], parent: type[Strip] | Strip) -> None:
         if 'filepath' not in strip:
             continue
 
-        strip['fades'] = strip.get('fades', [0, 0])
-        if len(strip['fades']) == 2:
-            strip['fades'] += [0, 0]
+        strip['fades'] = strip.get('fades', [])
+        if len(strip['fades']) < 4:
+            strip['fades'].extend([0, 0, 0, 0])
+            strip['fades'] = strip['fades'][:4]
         try:
             strip['fades'][0] = strips[i - 1]['crossfade']
         except (IndexError, KeyError):
