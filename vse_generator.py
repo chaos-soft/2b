@@ -18,7 +18,6 @@ class BuildStripsOperator(bpy.types.Operator):
     def execute(self, context):
         load_yaml_config()
         get_strips(strips, parent=Strip)
-        bpy.ops.sequencer.select_all(action='SELECT')
         print('FINISHED')
         return {'FINISHED'}
 

@@ -40,8 +40,10 @@ class Strip():
     fade_out_position: int = 0
     frame_final_end: int = 0
     type: str = 'AUDIO'
-    xml: str = ('<EDIT STARTSOURCE={} CHANNEL={} LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0 '
-                'USER_TITLE="{}"><FILE SRC="{}"></FILE>{}</EDIT>')
+    xml: str = (
+        '<EDIT STARTSOURCE={} CHANNEL={} LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0 '
+        'USER_TITLE="{}"><FILE SRC="{}"></FILE>{}</EDIT>'
+    )
     xml_empty: str = '<EDIT STARTSOURCE=0 CHANNEL=0 LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0></EDIT>'
     xml_fade: str = '<AUTO POSITION={} VALUE={} VALUE1=0 CONTROL_IN_VALUE=0 CONTROL_OUT_VALUE=0 TANGENT_MODE=0></AUTO>'
 
