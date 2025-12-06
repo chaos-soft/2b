@@ -46,6 +46,12 @@ class Strip():
     )
     xml_empty: str = '<EDIT STARTSOURCE=0 CHANNEL=0 LENGTH={} HARD_LEFT=0 HARD_RIGHT=0 COLOR=0 GROUP_ID=0></EDIT>'
     xml_fade: str = '<AUTO POSITION={} VALUE={} VALUE1=0 CONTROL_IN_VALUE=0 CONTROL_OUT_VALUE=0 TANGENT_MODE=0></AUTO>'
+    xml_plugin_empty: str = (
+        '<PLUGIN LENGTH={} TYPE=0 TITLE="">\n'
+        '<IN></IN><OUT></OUT><ON></ON>\n'
+        '<KEYFRAME POSITION=0 DEFAULT=1></KEYFRAME>\n'
+        '</PLUGIN>'
+    )
 
     def __init__(self, strip, parent):
         self.append = strip.get('append', '')
@@ -58,6 +64,7 @@ class Strip():
         self.get_offset_duration_position(strip)
         self.mutes = strip.get('mutes', [])
         self.mutes_config = strip.get('mutes_config', [])
+        self.plugins = strip.get('plugins', [])
         self.volume_levels = strip.get('volume_levels', [])
         self.volume = strip.get('volume', 0)
         if not self.volume:
@@ -84,7 +91,7 @@ class Strip():
         else:
             return self.duration_
 
-    def extend_empty(self, duration, left_fade_out, left_fade_out_position, left_cut):
+    def extend_empty(self, duration: int, left_fade_out: int, left_fade_out_position: int, left_cut: int):
         if self.is_video() and left_cut:
             duration += left_cut
         if self.is_video() and self.channel in [2, 3] and not left_fade_out_position:
@@ -224,7 +231,25 @@ class Strip():
                 duration = self.frame_final_start - left.frame_final_end
             duration = self.extend_empty(duration, left.fade_out, left.fade_out_position, left.cut)
             return self.xml_empty.format(duration * delta)
-        return ''
+        else:
+            return ''
+
+    def get_xml_plugins(self) -> str:
+        if not self.plugins:
+            return ''
+        else:
+            return '\n'.join(map(lambda v: v.format(self.duration), self.plugins))
+
+    def get_xml_plugins_empty(self) -> str:
+        if not self.plugins:
+            return ''
+        left = channels[self.channel].get_left_sequence(self) or Strip
+        if left.frame_final_end != self.frame_final_start:
+            duration = self.frame_final_start - left.frame_final_end
+            duration = self.extend_empty(duration, left.fade_out, left.fade_out_position, left.cut)
+            return self.xml_plugin_empty.format(duration)
+        else:
+            return ''
 
     def is_audio(self):
         return True if self.type == 'AUDIO' else False
@@ -279,7 +304,7 @@ def load_yaml_config(file):
 def main() -> None:
     get_strips(strips, parent=Strip)
 
-    id_ = None
+    channel_id = None
     type = None
     with open(xml_file) as f:
         for line in f.readlines():
@@ -289,23 +314,31 @@ def main() -> None:
                 type = line.rstrip('>').split('=')[-1]
 
             if line.startswith('<TITLE>'):
-                id_ = int(line.lstrip('<TITLE>').rstrip('</TITLE>'))
+                channel_id = int(line.lstrip('<TITLE>').rstrip('</TITLE>'))
 
-            if line.startswith('</EDITS>'):
-                if id_ in channels:
-                    for sequence in channels[id_].sequences:
-                        sequence.type = type
-                        for xml in [sequence.get_xml_empty(), sequence.get_xml()]:
-                            if xml:
-                                print(xml)
+            if line.startswith('</EDITS>') and channel_id in channels:
+                for sequence in channels[channel_id].sequences:
+                    sequence.type = type
+                    for xml in [sequence.get_xml_empty(), sequence.get_xml()]:
+                        if xml:
+                            print(xml)
 
-            if line.startswith('</FADEAUTOS>') and type == 'AUDIO' and id_ in channels:
-                for sequence in channels[id_].sequences:
+            if line.startswith('</FADEAUTOS>') and type == 'AUDIO' and channel_id in channels:
+                for sequence in channels[channel_id].sequences:
                     keyframes = sequence.get_volume_keyframes()
                     if keyframes:
                         print('\n'.join(keyframes.values()))
 
             print(line)
+
+            if line.startswith('</SPEEDAUTOS>') and type == 'VIDEO' and channel_id in channels:
+                for sequence in channels[channel_id].sequences:
+                    if sequence.plugins:
+                        print('<PLUGINSET RECORD=1>')
+                        for xml in [sequence.get_xml_plugins_empty(), sequence.get_xml_plugins().rstrip()]:
+                            if xml:
+                                print(xml)
+                        print('</PLUGINSET>')
 
 
 if __name__ == '__main__':
